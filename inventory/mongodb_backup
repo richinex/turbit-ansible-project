@@ -1,0 +1,6 @@
+
+[mongodb_backup]
+mongodb-backup ansible_host=143.42.61.126 ansible_port=44426
+
+
+

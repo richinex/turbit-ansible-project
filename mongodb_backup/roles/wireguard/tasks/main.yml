@@ -1,0 +1,22 @@
+- name: Install required packages for WireGuard
+  ansible.builtin.apt:
+    update_cache: yes
+    name:
+      - wireguard-tools
+      - resolvconf
+    state: present
+
+- name: Deploy WireGuard configuration for backup
+  ansible.builtin.template:
+    src: backup.conf.j2
+    dest: /etc/wireguard/backup.conf
+    owner: root
+    group: root
+    mode: '0600'
+  notify: restart wireguard
+
+- name: Ensure WireGuard service for backup is started and enabled at boot
+  ansible.builtin.systemd:
+    name: wg-quick@backup.service
+    state: started
+    enabled: yes

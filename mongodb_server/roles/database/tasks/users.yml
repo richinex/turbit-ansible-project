@@ -1,0 +1,28 @@
+# Create a root user for MongoDB.
+# This user will have the highest level of privileges in MongoDB and can perform any action.
+# The `no_log: true` directive ensures that sensitive information such as passwords does not appear in the Ansible logs.
+- name: Create MongoDB root user
+  mongodb_user:
+    login_port: "{{ login_port }}"
+    database: "admin"
+    name: "{{ mongodb_root_user }}"
+    password: "{{ mongodb_root_password }}"
+    roles: "root"
+  no_log: true
+
+# Create an administrative user named 'siteUserAdmin' for MongoDB.
+# This user will have read and write privileges to the specified database and backup privileges to the admin database.
+# This task will use the MongoDB root user for authentication.
+# Again, sensitive information is hidden from the logs using `no_log: true`.
+- name: Create MongoDB administrative user siteUserAdmin
+  mongodb_user:
+    login_user: "{{ mongodb_root_user }}"
+    login_password: "{{ mongodb_root_password }}"
+    login_port: "{{ login_port }}"
+    database: "{{ database_name }}"
+    name: "{{ mongodb_backup_user }}"
+    password: "{{ mongodb_backup_password }}"
+    roles:
+      - { db: "{{ database_name }}", role: "readWrite" }
+      - { db: "admin", role: "backup" }
+  no_log: true

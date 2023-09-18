@@ -1,0 +1,142 @@
+---
+- name: check if mongodb is initialized
+  ansible.builtin.stat: path=/root/mongodb_initialized_true
+  ignore_errors: true
+  register: mongodb_initialized_true
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Check Ubuntu version
+  ansible.builtin.command: lsb_release -rs
+  register: ubuntu_version
+
+- name: Check if focal-security repository exists
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list.d/focal-security.list
+  register: focal_security_repo
+
+- name: Add focal-security repository
+  ansible.builtin.shell: echo "deb http://security.ubuntu.com/ubuntu focal-security main" | sudo tee /etc/apt/sources.list.d/focal-security.list
+  when: ubuntu_version.stdout == "22.04" and not focal_security_repo.stat.exists
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+  when: ubuntu_version.stdout == "22.04"
+
+- name: Install libssl1.1
+  ansible.builtin.apt:
+    name: libssl1.1
+    state: present
+  when: ubuntu_version.stdout == "22.04"
+
+- name: Installing dependencies
+  ansible.builtin.package:
+    name: "{{ item }}"
+    state: present
+    update_cache: yes
+  loop:
+    - curl
+    - gnupg
+    - python3-pip
+  become: yes
+
+- name: Install pymongo
+  ansible.builtin.pip:
+    name: pymongo==4.*
+
+- name: Check if MongoDB APT keyring exists
+  ansible.builtin.stat:
+    path: /usr/share/keyrings/mongo-key.gpg
+  register: mongo_keyring_exists
+
+- name: Add MongoDB APT keyring
+  ansible.builtin.shell: "curl -fsSL https://www.mongodb.org/static/pgp/server-{{ mongodb_version }}.asc | sudo gpg --dearmour -o /usr/share/keyrings/mongo-key.gpg"
+  args:
+    executable: /bin/bash
+  when: not mongo_keyring_exists.stat.exists
+
+- name: Check if MongoDB repository exists
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list.d/mongodb-org-{{ mongodb_version }}.list
+  register: mongo_repository_exists
+
+- name: Add MongoDB repository
+  ansible.builtin.shell: |
+    echo deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongo-key.gpg] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/{{ mongodb_version }} multiverse > /etc/apt/sources.list.d/mongodb-org-{{ mongodb_version }}.list
+  args:
+    executable: /bin/bash
+  when: not mongo_repository_exists.stat.exists
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+- name: Install MongoDB packages
+  ansible.builtin.apt:
+    name: mongodb-org
+    state: latest
+- name: Enable and start MongoDB service
+  ansible.builtin.service:
+    name: mongod
+    state: started
+    enabled: yes
+
+- name: set up users
+  include_tasks: users.yml
+  when: mongodb_initialized_true.stat.exists == false
+
+- name: Enable remote connections in MongoDB
+  ansible.builtin.lineinfile:
+    path: /etc/mongod.conf
+    regexp: "^ *bindIp:.*"
+    line: "  bindIp: 127.0.0.1,10.100.94.12"
+    state: present
+    backup: yes
+  notify:
+    - Restart MongoDB Service
+
+- name: Enable authentication in MongoDB
+  ansible.builtin.lineinfile:
+    path: /etc/mongod.conf
+    line: "security:\n  authorization: enabled"
+    insertafter: "^#security:"
+    state: present
+    backup: yes
+  notify:
+    - Restart MongoDB Service
+  when: mongodb_initialized_true.stat.exists == false
+
+
+- name: Ensure backup directory exists
+  ansible.builtin.file:
+    path: "{{ mongodb_backup_dir }}"
+    state: directory
+    mode: "755"
+
+- name: Ensure /usr/local/bin exists (just in case)
+  ansible.builtin.file:
+    path: /usr/local/bin
+    state: directory
+    mode: "755"
+
+- name: Copy backup and sync script
+  ansible.builtin.template:
+    src: restore-backup.sh.j2
+    dest: /usr/local/bin/restore-backup.sh
+    mode: "755"
+
+
+- name: create mongodb_initialized_true
+  ansible.builtin.file:
+    path: /root/mongodb_initialized_true
+    state: touch
+  when: mongodb_initialized_true.stat.exists == false
+
+- name: set immutable attribute
+  ansible.builtin.file:
+    path: /root/mongodb_initialized_true
+    attributes: i
+  when: mongodb_initialized_true.stat.exists == false

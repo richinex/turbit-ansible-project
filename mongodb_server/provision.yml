@@ -1,0 +1,9 @@
+---
+- hosts: mongodb_server
+  become: true
+  roles:
+    - hostname
+    - sysctl
+    - security
+    - wireguard
+    - database

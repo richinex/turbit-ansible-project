@@ -1,0 +1,8 @@
+---
+- hosts: mongodb_backup
+  become: true
+  roles:
+    - hostname
+    - security
+    - wireguard
+    - database

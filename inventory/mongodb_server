@@ -1,0 +1,7 @@
+
+[mongodb_server]
+mongodb-server ansible_host=143.42.61.139 ansible_port=44425
+
+
+
+

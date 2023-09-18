@@ -1,0 +1,9 @@
+- name: restart sshd
+  systemd: "name=sshd state=restarted" # restarts the sshd service
+
+
+- name: reload iptables
+  command: netfilter-persistent reload
+
+
+

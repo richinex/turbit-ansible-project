@@ -1,0 +1,267 @@
+---
+# Check if the MongoDB has been initialized on the target host. This is done by checking for a specific file.
+- name: check if mongodb is initialized
+  ansible.builtin.stat: path=/root/mongodb_initialized_true
+  ignore_errors: true
+  register: mongodb_initialized_true
+
+# Update the APT cache to ensure we're pulling the latest package lists.
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+
+# Check the Ubuntu version of the target system.
+- name: Check Ubuntu version
+  ansible.builtin.command: lsb_release -rs
+  register: ubuntu_version
+
+# Verify if the focal-security repository is present.
+- name: Check if focal-security repository exists
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list.d/focal-security.list
+  register: focal_security_repo
+
+# Add the focal-security repository for Ubuntu 22.04 systems if it's not already present.
+- name: Add focal-security repository
+  ansible.builtin.shell: echo "deb http://security.ubuntu.com/ubuntu focal-security main" | sudo tee /etc/apt/sources.list.d/focal-security.list
+  when: ubuntu_version.stdout == "22.04" and not focal_security_repo.stat.exists
+
+# Update the APT cache again if the focal-security repository was added (specific to Ubuntu 22.04).
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+  when: ubuntu_version.stdout == "22.04"
+
+# Install libssl1.1 package for Ubuntu 22.04 systems.
+- name: Install libssl1.1
+  ansible.builtin.apt:
+    name: libssl1.1
+    state: present
+  when: ubuntu_version.stdout == "22.04"
+
+# Install general dependencies required for the playbook to function correctly.
+- name: Installing dependencies
+  ansible.builtin.package:
+    name: "{{ item }}"
+    state: present
+    update_cache: yes
+  loop:
+    - curl
+    - gnupg
+    - python3-pip
+  become: yes
+
+# Install pymongo Python library which is required for interacting with MongoDB from Python.
+- name: Install pymongo
+  ansible.builtin.pip:
+    name: pymongo==4.*
+
+# Check if the MongoDB APT keyring file exists.
+- name: Check if MongoDB APT keyring exists
+  ansible.builtin.stat:
+    path: /usr/share/keyrings/mongo-key.gpg
+  register: mongo_keyring_exists
+
+# If the MongoDB APT keyring file doesn't exist, fetch and add it.
+- name: Add MongoDB APT keyring
+  ansible.builtin.shell: "curl -fsSL https://www.mongodb.org/static/pgp/server-{{ mongodb_version }}.asc | sudo gpg --dearmour -o /usr/share/keyrings/mongo-key.gpg"
+  args:
+    executable: /bin/bash
+  when: not mongo_keyring_exists.stat.exists
+
+# Check if the MongoDB repository file exists.
+- name: Check if MongoDB repository exists
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list.d/mongodb-org-{{ mongodb_version }}.list
+  register: mongo_repository_exists
+
+# If the MongoDB repository file doesn't exist, add the appropriate repository for MongoDB installation.
+- name: Add MongoDB repository
+  ansible.builtin.shell: |
+    echo deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongo-key.gpg] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/{{ mongodb_version }} multiverse > /etc/apt/sources.list.d/mongodb-org-{{ mongodb_version }}.list
+  args:
+    executable: /bin/bash
+  when: not mongo_repository_exists.stat.exists
+
+# Update the APT cache after adding MongoDB repository.
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+
+# Install the MongoDB packages.
+- name: Install MongoDB packages
+  ansible.builtin.apt:
+    name: mongodb-org
+    state: latest
+
+# Enable the MongoDB service and ensure it's running.
+- name: Enable and start MongoDB service
+  ansible.builtin.service:
+    name: mongod
+    state: started
+    enabled: yes
+
+# Set up MongoDB users, but only if MongoDB hasn't been initialized before.
+- name: set up users
+  include_tasks: users.yml
+  when: mongodb_initialized_true.stat.exists == false
+
+# Allow MongoDB to listen on an additional IP, enabling remote connections.
+- name: Enable remote connections in MongoDB
+  ansible.builtin.lineinfile:
+    path: /etc/mongod.conf
+    regexp: "^ *bindIp:.*"
+    line: "  bindIp: 127.0.0.1,10.100.94.1"
+    state: present
+    backup: yes
+  notify:
+    - Restart MongoDB Service
+
+# Enable authentication for MongoDB, but only if MongoDB hasn't been initialized before.
+- name: Enable authentication in MongoDB
+  ansible.builtin.lineinfile:
+    path: /etc/mongod.conf
+    line: "security:\n  authorization: enabled"
+    insertafter: "^#security:"
+    state: present
+    backup: yes
+  notify:
+    - Restart MongoDB Service
+  when: mongodb_initialized_true.stat.exists == false
+
+
+# Ensure that the specified directory for MongoDB backups exists on the server.
+- name: Ensure backup directory exists
+  ansible.builtin.file:
+    path: "{{ mongodb_backup_dir }}"
+    state: directory
+    mode: "755"
+
+# Use a template to generate a script file that will be used for MongoDB backups and synchronization.
+# Once generated, the script is placed in /usr/local/bin for execution.
+- name: Copy backup and sync script
+  ansible.builtin.template:
+    src: mongodb-dump-and-sync-database.sh.j2
+    dest: /usr/local/bin/mongodb-dump-and-sync-database.sh
+    mode: "755"
+
+# Ensure the .ssh directory exists for the root user, which will store SSH keys.
+# This task will only run if MongoDB hasn't been initialized on the server previously.
+- name: Ensure the .ssh directory exists for the root user
+  ansible.builtin.file:
+    path: "/root/.ssh"
+    state: directory
+    mode: "0700"
+    owner: root
+    group: root
+  when: mongodb_initialized_true.stat.exists == false
+
+# Generate an SSH key pair for the root user on the mongodb_server.
+# This task will only run if MongoDB hasn't been initialized on the server previously.
+- name: Generate SSH key for the root user on mongodb_server
+  ansible.builtin.openssh_keypair:
+    path: "/root/.ssh/id_rsa"
+    type: rsa
+    size: 4096
+    state: present
+  when: mongodb_initialized_true.stat.exists == false
+  register: ssh_key
+
+# This allows the mongodb_server to initiate an SSH connection (or in your case, an rsync operation)
+# to mongodb_backup without being prompted for a password.
+- name: Ensure mongodb_backup hostname is resolvable
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "{{ mongodb_backup_ip }}  mongodb_backup"
+    state: present
+  when: mongodb_initialized_true.stat.exists == false
+
+# Use the authorized_key module to add the previously generated public key (ssh_key.public_key)
+# to the authorized_keys file of the root user on the mongodb_backup server.
+- name: Set up SSH key-based authentication from mongodb_server to mongodb_backup
+  ansible.builtin.authorized_key:
+    user: root
+    state: present
+    key: "{{ ssh_key.public_key }}"
+  delegate_to: "{{ mongodb_backup_ip }}"
+  vars:
+    ansible_port: "{{ mongodb_backup_port }}"
+  when: mongodb_initialized_true.stat.exists == false
+
+# Schedule a cron job to run the MongoDB backup and synchronization script daily at 3:01 AM.
+- name: Add backup and sync to crontab
+  ansible.builtin.cron:
+    name: mongodb dump and sync database
+    minute: "01"
+    hour: "3"
+    job: "/usr/local/bin/mongodb-dump-and-sync-database.sh > /dev/null 2>&1"
+
+# Connect to the specified MongoDB database and insert some sample data into a test collection.
+# The operation will be marked as failed if there are errors in the MongoDB shell's output.
+- name: Connect to MongoDB and insert sample data
+  ansible.builtin.shell: >
+    mongosh {{ database_name }} --username="{{ mongodb_backup_user }}" --password="{{ mongodb_backup_password }}" --eval 'db.testCollection.insert([{name: "John Doe", age: 30}, {name: "Jane Doe", age: 28}])'
+  register: mongo_output
+  failed_when: "'E QUERY    [js]' in mongo_output.stderr"
+
+
+# Retrieve the contents of the testCollection to verify that the sample data has been inserted.
+- name: Print contents of the testCollection
+  shell: >
+    mongosh {{ database_name }} --username="{{ mongodb_backup_user }}" --password="{{ mongodb_backup_password }}" --eval 'printjson(db.testCollection.find().toArray())'
+  register: mongo_print_output
+  changed_when: false
+
+
+
+
+# Print the retrieved contents of the testCollection to the console.
+- name: Print testCollection contents
+  ansible.builtin.debug:
+    var: mongo_print_output.stdout
+
+# Manually trigger the MongoDB backup script to test the backup process.
+- name: Test backup by running the backup script
+  command: /usr/local/bin/mongodb-dump-and-sync-database.sh
+
+# After testing, remove the testCollection from the database.
+# The operation will be marked as failed if there are errors in the MongoDB shell's output.
+- name: Drop the testCollection
+  ansible.builtin.shell: >
+    mongosh {{ database_name }} --username="{{ mongodb_backup_user }}" --password="{{ mongodb_backup_password }}" --eval 'db.testCollection.drop()'
+  register: mongo_drop_output
+  failed_when: "'E QUERY    [js]' in mongo_drop_output.stderr"
+
+
+
+# The logic of the play here dictates that we are primarily working with mongodb_server
+# but occasionally need to perform an action on another host.
+- name: Check if backup exists on mongodb_backup
+  ansible.builtin.stat:
+    path: "/mnt/storage/backups/mongodb"
+  delegate_to: "{{ mongodb_backup_ip }}"
+  vars:
+    ansible_port: "{{ mongodb_backup_port }}"
+  register: backup_dir
+
+# If the backup directory does not exist on the mongodb_backup server, the playbook will fail with the specified message.
+- name: Fail if backup directory does not exist
+  ansible.builtin.fail:
+    msg: "Backup directory not found on mongodb_backup server."
+  when: not backup_dir.stat.exists
+
+# Create a file named `mongodb_initialized_true` in the root directory to mark the MongoDB initialization status.
+# This file will only be created if it does not already exist.
+- name: create mongodb_initialized_true
+  ansible.builtin.file:
+    path: /root/mongodb_initialized_true
+    state: touch
+  when: mongodb_initialized_true.stat.exists == false
+
+# Set the immutable attribute on the `mongodb_initialized_true` file to prevent accidental modifications or deletions.
+# This is done to ensure that the file remains intact once MongoDB has been initialized.
+- name: set immutable attribute
+  ansible.builtin.file:
+    path: /root/mongodb_initialized_true
+    attributes: i
+  when: mongodb_initialized_true.stat.exists == false

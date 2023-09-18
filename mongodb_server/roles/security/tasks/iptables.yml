@@ -1,0 +1,31 @@
+# Install the 'iptables-persistent' and 'netfilter-persistent' packages.
+# These packages ensure that iptables rules persist across reboots.
+- name: Install iptables-persistent
+  ansible.builtin.apt:
+    update_cache: yes
+    name:
+      - iptables-persistent
+      - netfilter-persistent
+    state: present
+
+# Ensure the 'netfilter-persistent' service is started now and also set to start automatically on system boot.
+# This service makes sure the iptables rules are loaded on system startup.
+- name: Ensure netfilter-persistent is started and enabled at boot
+  ansible.builtin.systemd:
+    name: netfilter-persistent
+    state: started
+    enabled: yes
+
+# Copy the custom iptables rules from the local 'files/iptables.rules' to the target machine's '/etc/iptables/rules.v4'.
+# After the copy, a handler (not shown here) named 'reload iptables' will be notified to ensure that
+# the new iptables rules are loaded into the system.
+- name: Copy iptables rules
+  ansible.builtin.template:
+    src: iptables.rules.j2
+    dest: /etc/iptables/rules.v4
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+  notify:
+    - reload iptables

@@ -1,0 +1,11 @@
+# Copy the custom SSH daemon configuration from the local 'files/sshd_config' to the target machine's '/etc/ssh/sshd_config'.
+# After copying, the 'sshd' service will be notified to restart so that any changes take effect.
+- name: sshd_config
+  ansible.builtin.copy:
+    src: files/sshd_config
+    dest: /etc/ssh/sshd_config
+    owner: root
+    group: root
+    mode: '644'
+    backup: yes
+  notify: restart sshd

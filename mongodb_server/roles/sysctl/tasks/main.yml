@@ -1,0 +1,11 @@
+# Copy the custom system control parameters from the local 'files/99-sysctl.conf' to the target machine's '/etc/sysctl.d/99-sysctl.conf'.
+# After copying, the sysctl settings will be notified to reload, ensuring the new configurations are applied.
+- name: 99-sysctl.conf
+  ansible.builtin.copy:
+    src: files/99-sysctl.conf
+    dest: /etc/sysctl.d/99-sysctl.conf
+    owner: root
+    group: root
+    mode: '644'
+    backup: yes
+  notify: reload sysctl

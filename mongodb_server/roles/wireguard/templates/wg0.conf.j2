@@ -1,0 +1,14 @@
+[Interface]
+Address = 10.100.94.1/24
+ListenPort = {{ wireguard_port }}
+PrivateKey = {{ mongodb_server_private_key }}
+
+[Peer]
+PublicKey = {{ controller_public_key }}
+PresharedKey = {{ mongodb_server_controller_psk }}
+AllowedIPs = 10.100.94.11/32
+
+[Peer]
+PublicKey = {{ mongodb_backup_public_key }}
+PresharedKey = {{ mongodb_server_backup_psk }}
+AllowedIPs = 10.100.94.12/32

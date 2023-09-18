@@ -1,0 +1,9 @@
+- name: set hostname
+  ansible.builtin.hostname:
+    name: mongodb-backup
+    use: systemd
+
+- name: mongodb_backup
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: 143.42.61.126 mongodb-backup

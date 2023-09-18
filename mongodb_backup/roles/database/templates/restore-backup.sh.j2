@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+# Activate trace mode for debugging - this will print each command before it's executed.
+set -x
+
+# Ensure the right number of arguments are provided
+if [[ $# -lt 2 ]]; then
+    echo "Usage: $0 BACKUP_DIR DB_NAME COLLECTION_NAME MONGO_USER MONGO_PASSWORD AUTH_DB HOST"
+    exit 1
+fi
+
+# Variables from command-line arguments
+BACKUP_DIR="$1"
+DB_NAME="$2"
+COLLECTION_NAME="testCollection"
+MONGO_USER="{{ mongodb_backup_user }}"
+MONGO_PASSWORD="{{ mongodb_backup_password }}"
+AUTH_DB="{{ database_name }}"
+HOST="localhost:27017"
+
+# Navigate to the backup directory
+cd "$BACKUP_DIR"
+
+# Decompress the backup, if it's compressed
+BACKUP_FILE="$BACKUP_DIR/${DB_NAME}-$(basename $BACKUP_DIR).tar.gz"
+if [ -f "$BACKUP_FILE" ]; then
+    tar -xzf "$BACKUP_FILE"
+fi
+
+# Restore the MongoDB database
+mongorestore --host=$HOST --username=$MONGO_USER --password=$MONGO_PASSWORD --authenticationDatabase=$AUTH_DB --db=$DB_NAME --collection=$COLLECTION_NAME "$DB_NAME/$COLLECTION_NAME.bson"
+
+# Check the restored data
+echo "Checking restored data..."
+mongosh --username=$MONGO_USER --password=$MONGO_PASSWORD --authenticationDatabase=$AUTH_DB <<EOF
+use $DB_NAME
+db.$COLLECTION_NAME.find().pretty()
+EOF
+
+# End of the script
+echo "Script completed."

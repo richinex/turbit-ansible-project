@@ -1,0 +1,13 @@
+# Set the hostname of the target machine to 'mongodb-server'.
+# This task will utilize systemd to persistently change the hostname.
+- name: set hostname
+  ansible.builtin.hostname:
+    name: mongodb-server
+    use: systemd
+
+# Update the /etc/hosts file to associate the IP address '143.42.61.139' with the hostname 'mongodb-server'.
+# This ensures that the hostname resolves to the correct IP address on the local machine.
+- name: mongodb_server
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: 143.42.61.139 mongodb-server

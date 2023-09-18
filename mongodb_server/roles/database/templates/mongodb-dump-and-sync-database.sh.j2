@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+# Activate trace mode for debugging - this will print each command before it's executed.
+set -x
+
+# Define the directory where backups are stored and today's backup directory.
+backup_dir="{{ mongodb_backup_dir }}"
+db_backup="$backup_dir/dumps-$(date -I)"
+
+# MongoDB host to connect to.
+mongo_host=$(hostname)
+
+# SSH Key for root user and backup server details
+ssh_key="/root/.ssh/id_rsa"
+destination_server="root@mongodb-backup"
+
+# Ensure today's backup directory exists on both local and mongodb_backup server.
+mkdir -p "$db_backup"
+ssh -i "$ssh_key" -p {{ mongodb_backup_port }} "$destination_server" "mkdir -p \"$db_backup\""
+
+
+# Backup MongoDB instance and then compress the output.
+backup_name="$db_backup/mongodb-$(date +%Y-%m-%d)"
+mongodump --username="{{ mongodb_backup_user }}" --password="{{ mongodb_backup_password }}" --authenticationDatabase="{{ database_name }}" --out="$backup_name"
+
+# Check if the mongodump was successful using the special $? variable in bash
+# which contains the exit code of the last command that was executed
+if [ $? -ne 0 ]; then
+    echo "Error: MongoDB dump failed!"
+    exit 1
+fi
+
+tar -czf "$backup_name.tar.gz" -C "$backup_name" .
+rm -rf "$backup_name"
+
+# Manage old backups based on date.
+list_of_backups=( $(ls "$backup_dir" | grep -oE "[0-9]{4}-[0-9]{2}-[0-9]{2}$") )
+for backup in "${list_of_backups[@]}"; do
+    # If the backup is from within the last 7 days, keep it.
+    if [[ "$backup" > $(date -I -d "7 days ago") ]]; then
+        echo "$backup is a backup from the last 7 days, keeping it"
+    # If the backup was taken on a Thursday and is less than a month old, keep it.
+    elif [[ $(date -d "$backup" +%u) == 4 && "$backup" > $(date -I -d "1 month ago") ]]; then
+        echo "$backup was made on a Thursday and is less than a month old, keeping it"
+    # If the backup was taken on the first day of any month and is less than a year old, keep it.
+    elif [[ $(date -d "$backup" +%d) == 01 && "$backup" > $(date -I -d "1 year ago") ]]; then
+        echo "$backup was created on the first day of a month and is less than a year old, keeping it"
+    # If the backup does not meet any of the above conditions, delete it.
+    else
+        rm -rf "$backup_dir"/dumps-"$backup"
+        echo "$backup does not meet retention conditions, deleting it"
+    fi
+done
+
+# Sync to backup server, but only if there are backup files to sync.
+if [ "$(ls -A $db_backup/)" ]; then
+    rsync -avz -e "ssh -i $ssh_key -p {{ mongodb_backup_port }}" "$db_backup/" "$destination_server:$db_backup/"
+else
+    echo "No backups found in $db_backup. Exiting without synchronization."
+    exit 1
+fi

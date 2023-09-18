@@ -1,0 +1,28 @@
+# Update the APT package cache and install the specified packages.
+- name: update and install packages
+  ansible.builtin.apt:
+    update_cache: yes
+    # Install wireguard-tools (for managing WireGuard VPN) and resolvconf (a framework for managing multiple DNS configurations).
+    name:
+      - wireguard-tools
+      - resolvconf
+    state: present
+
+# Copy the wg0 configuration file for WireGuard to the appropriate location.
+# This is the main configuration for the WireGuard VPN interface.
+- name: wg0
+  ansible.builtin.template:
+    src: wg0.conf.j2
+    dest: /etc/wireguard/wg0.conf
+    owner: root
+    group: root
+    mode: '0600'
+  # If the configuration file changes, a handler (presumably defined elsewhere in your playbook) will restart the wg0 interface.
+  notify: restart wg0
+
+# Ensure that the WireGuard service for the wg0 interface is both running and set to start at boot.
+- name: ensure wg-quick@wg0.service is started and enabled at boot
+  ansible.builtin.systemd:
+    name: wg-quick@wg0.service
+    state: started
+    enabled: yes
