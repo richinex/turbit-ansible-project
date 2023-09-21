@@ -160,6 +160,7 @@ cython_debug/
 #.idea/
 
 .vault_password
+wireguard_config/
 encrypt_string.sh
 encrypted_strings.txt
 plaintext_strings.txt
